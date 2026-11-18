@@ -7,7 +7,7 @@ they come from the ALERT_CONFIG secret (JSON), so the repo can be public. No ord
 
 ALERT_CONFIG example:
   {"vix": [30, 35, 45], "down": {"spx": [7000], "ndx": [25000]}, "up": {"ndx": [30000]},
-   "backstop": {"QQQ": 661.71}, "note": "free text shown in the email"}
+   "backstop": {"QQQ": 661.71}, "crash": {"spx_dd": 0.20, "vix": 35, "tech_gap": 0.12}, "note": "free text shown in the email"}
 "backstop": fund -> sale price; emails when the fund CLOSES at or above it (buy back the unfilled rest).
 Env: SMTP_USER, SMTP_PASS, ALERT_TO, ALERT_CONFIG, STATE_FILE (default state/state.json).  --test sends a sample email.
 """
@@ -95,6 +95,17 @@ def check(cfg):
     ctx = (f"S&amp;P 500 {notes['spx']:,.0f}; 50-day {notes['m50']:,.0f}; 200-day {notes['m200']:,.0f}; 52-week high {notes['hi']:,.0f}"
            + (f"; {notes['breadth']:.0%} of S&amp;P stocks above their 200-day" if "breadth" in notes else ""))
     for k, t in BEAR.items(): lines[k] = f"<b>Bull-market-end signal:</b> {t}. ({ctx})"
+    # crash scenarios (cfg "crash": {"spx_dd": 0.20, "vix": 35, "tech_gap": 0.12})
+    cr = cfg.get("crash")
+    if cr:
+        nd = daily("^NDX")["Close"].squeeze().dropna()
+        spdd = float(sp.iloc[-1] / sp.tail(252).max() - 1); nddd = float(nd.iloc[-1] / nd.tail(252).max() - 1)
+        crash = spdd <= -cr.get("spx_dd", 0.20) and vix > cr.get("vix", 35)
+        techled = crash and (nddd - spdd) <= -cr.get("tech_gap", 0.12)
+        hits["scen_crash"] = bool(crash and not techled); hits["scen_crash_tech"] = bool(techled)
+        st_ = f"S&amp;P 500 {spdd:+.0%} from its high, Nasdaq-100 {nddd:+.0%}, VIX {vix:.1f}"
+        lines["scen_crash"] = (f"<b>Crash scenario B is on</b> ({st_}). Your plan: buy at your stages mainly Nasdaq/tech (QQQ, the index, not single AI stocks), plus some S&amp;P; add more tech after a follow-through day.")
+        lines["scen_crash_tech"] = (f"<b>Tech-led crash</b> ({st_}: the Nasdaq is falling much harder than the S&amp;P). Your plan: buy the S&amp;P first at your stages; add tech only after a follow-through day.")
     # follow-through days (event keys, last 3 sessions)
     events = {}
     for tk, nm in (("^IXIC", "Nasdaq Composite"), ("^GSPC", "S&P 500")):
@@ -138,6 +149,8 @@ def main():
         if new_ev and all(k.startswith("ftd_") for k in new_ev) and not new: subj = "Follow-through day"
         elif new_ev and not new: subj = "Follow-through day FAILED"
         elif new and all(k.startswith("backstop_") for k in new): subj = "Backstop: back at your sale price"
+        elif "scen_crash_tech" in new: subj = "Tech-led crash: S&P first"
+        elif "scen_crash" in new: subj = "Crash scenario: buy tech at your stages"
         elif new and all(k in BEAR for k in new): subj = "Bull-market-end signal"
         elif new == [f"vix{min(cfg.get('vix', [0]))}"]: subj = "Early warning: VIX"
         else: subj = "Market alert"
