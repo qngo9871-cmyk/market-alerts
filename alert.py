@@ -47,6 +47,15 @@ def sp500_breadth():
     return float((last > m200).mean()), px.shape[1]
 
 
+def plan_table(cfg, which):
+    """Optional plan rows from cfg["plan"][which]: [[stage, share, split], ...] rendered as an HTML table."""
+    rows = cfg.get("plan", {}).get(which)
+    if not rows: return ""
+    tr = "".join("<tr>" + "".join(f"<td style='padding:2px 8px;border:1px solid #ccc'>{c}</td>" for c in r) + "</tr>" for r in rows)
+    return ("<br><table style='border-collapse:collapse;margin-top:6px'><tr><th style='padding:2px 8px;border:1px solid #ccc'>Stage</th>"
+            "<th style='padding:2px 8px;border:1px solid #ccc'>Share of cash</th><th style='padding:2px 8px;border:1px solid #ccc'>Nasdaq / S&amp;P</th></tr>" + tr + "</table>")
+
+
 def check(cfg):
     lines, hits, notes = {}, {}, {}
     closes = {}
@@ -60,6 +69,9 @@ def check(cfg):
     if top is not None:
         stage = [l for l in vl if vix > l and l != vl[0]] if len(vl) > 1 else [top]
         msg = (f"<b>VIX closed at {vix:.2f}</b> on {vd}: above " + ", ".join(str(l) for l in vl if vix > l) + ".")
+        notes_v = cfg.get("vix_note", {})                     # e.g. {"35": "stage 1: 15% of cash"}
+        extra = "; ".join(f"VIX {l}: {notes_v[str(l)]}" for l in vl if vix > l and str(l) in notes_v)
+        if extra: msg += f" Your plan: {extra}."
         for l in vl: lines[f"vix{l}"] = msg
     for ix, levels in cfg.get("down", {}).items():
         for l in levels:
@@ -104,8 +116,8 @@ def check(cfg):
         techled = crash and (nddd - spdd) <= -cr.get("tech_gap", 0.12)
         hits["scen_crash"] = bool(crash and not techled); hits["scen_crash_tech"] = bool(techled)
         st_ = f"S&amp;P 500 {spdd:+.0%} from its high, Nasdaq-100 {nddd:+.0%}, VIX {vix:.1f}"
-        lines["scen_crash"] = (f"<b>Crash scenario B is on</b> ({st_}). Your plan: buy at your stages mainly Nasdaq/tech (QQQ, the index, not single AI stocks), plus some S&amp;P; add more tech after a follow-through day.")
-        lines["scen_crash_tech"] = (f"<b>Tech-led crash</b> ({st_}: the Nasdaq is falling much harder than the S&amp;P). Your plan: buy the S&amp;P first at your stages; add tech only after a follow-through day.")
+        lines["scen_crash"] = (f"<b>Crash scenario B is on</b> ({st_}). Your plan: buy at your stages mainly Nasdaq/tech (QQQ, the index, not single AI stocks), plus some S&amp;P; add more tech after a follow-through day." + plan_table(cfg, "crash"))
+        lines["scen_crash_tech"] = (f"<b>Tech-led crash</b> ({st_}: the Nasdaq is falling much harder than the S&amp;P). Your plan: buy the S&amp;P first at your stages; add tech only after a follow-through day." + plan_table(cfg, "crash_tech"))
     # follow-through days (event keys, last 3 sessions)
     events = {}
     for tk, nm in (("^IXIC", "Nasdaq Composite"), ("^GSPC", "S&P 500")):
@@ -114,7 +126,7 @@ def check(cfg):
             if e["date"] not in recent: continue
             if e["kind"] == "ftd":
                 events[f"ftd_{tk[1:]}_{e['date']}"] = (f"<b>{nm} follow-through day</b> on {e['date']}: +{e['gain']:.1%} on higher volume, day {e['day']} "
-                                                       f"of the rally from the {e['low_date']} low ({e['off_low']:+.1%} off that low).")
+                                                       f"of the rally from the {e['low_date']} low ({e['off_low']:+.1%} off that low)." + (f" Your plan: {cfg['ftd_note']}." if cfg.get("ftd_note") else ""))
             else:
                 events[f"ftdfail_{tk[1:]}_{e['date']}"] = (f"<b>{nm} follow-through day of {e['ftd_date']} FAILED</b> on {e['date']}: "
                                                           f"closed at {e['close']:,.0f}, below the rally low {e['low']:,.0f}.")
