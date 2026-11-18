@@ -74,9 +74,14 @@ def check(cfg):
             b = daily(tk, "10d")["Close"].squeeze().dropna(); v, d = float(b.iloc[-1]), str(b.index[-1].date())
         except Exception as e:
             print(f"backstop {tk} skipped: {e}"); continue
-        k = f"backstop_{tk}"; hits[k] = v >= sale
-        lines[k] = (f"<b>Backstop: {tk} closed at {v:,.2f}</b> on {d}, back at or above your sale price {sale:,.2f}. "
-                    f"Your rule: buy back whatever of {tk} is still unfilled.")
+        # value: a price, or {"price": p, "closes": n, "since": "YYYY-MM-DD"} = n closes in a row at/above p, counting only closes on/after `since` (the sale date)
+        spec = sale if isinstance(sale, dict) else {"price": sale}
+        price, n = float(spec["price"]), int(spec.get("closes", 1))
+        after = b[b.index >= pd.Timestamp(spec["since"])] if spec.get("since") else b
+        run = after.tail(n)
+        k = f"backstop_{tk}"; hits[k] = bool(len(run) == n and (run >= price).all())
+        lines[k] = (f"<b>Backstop: {tk} closed at {v:,.2f}</b> on {d}" + (f" ({n} closes in a row)" if n > 1 else "") +
+                    f" at or above your sale price {price:,.2f}. Your rule: buy back whatever of {tk} is still unfilled.")
     # S&P 500 trend + breadth
     sp = daily("^GSPC")["Close"].squeeze().dropna(); m50, m200 = sp.rolling(50).mean(), sp.rolling(200).mean()
     below = (sp < m200).tail(15)
