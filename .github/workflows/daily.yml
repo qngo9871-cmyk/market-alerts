@@ -49,4 +49,5 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           ALERT_TO: ${{ secrets.ALERT_TO }}
-        run: python -c "import alert; alert.send('FAILED: daily market alerts', '<p>The daily market alert check failed. See the Actions log of qngo9871-cmyk/market-alerts.</p>')"
+        run: |
+          python -c "import alert; alert.send('FAILED - daily market alerts', '<p>The daily market alert check failed. See the Actions log of qngo9871-cmyk/market-alerts.</p>')"
