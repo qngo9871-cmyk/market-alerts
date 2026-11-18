@@ -6,7 +6,9 @@ condition first becomes true (it re-arms once the condition is false again). The
 they come from the ALERT_CONFIG secret (JSON), so the repo can be public. No orders, no broker connection.
 
 ALERT_CONFIG example:
-  {"vix": [30, 35, 45], "down": {"spx": [7000], "ndx": [25000]}, "up": {"ndx": [30000]}, "note": "free text shown in the email"}
+  {"vix": [30, 35, 45], "down": {"spx": [7000], "ndx": [25000]}, "up": {"ndx": [30000]},
+   "backstop": {"QQQ": 661.71}, "note": "free text shown in the email"}
+"backstop": fund -> sale price; emails when the fund CLOSES at or above it (buy back the unfilled rest).
 Env: SMTP_USER, SMTP_PASS, ALERT_TO, ALERT_CONFIG, STATE_FILE (default state/state.json).  --test sends a sample email.
 """
 import io, json, os, smtplib, sys, urllib.request, warnings
@@ -67,6 +69,14 @@ def check(cfg):
         for l in levels:
             k = f"{ix}_ge_{l}"; v, d = closes[ix]; hits[k] = v >= l
             lines[k] = f"<b>{NAMES[ix]} closed at {v:,.0f}</b> on {d}, above your level {l:,}."
+    for tk, sale in cfg.get("backstop", {}).items():
+        try:
+            b = daily(tk, "10d")["Close"].squeeze().dropna(); v, d = float(b.iloc[-1]), str(b.index[-1].date())
+        except Exception as e:
+            print(f"backstop {tk} skipped: {e}"); continue
+        k = f"backstop_{tk}"; hits[k] = v >= sale
+        lines[k] = (f"<b>Backstop: {tk} closed at {v:,.2f}</b> on {d}, back at or above your sale price {sale:,.2f}. "
+                    f"Your rule: buy back whatever of {tk} is still unfilled.")
     # S&P 500 trend + breadth
     sp = daily("^GSPC")["Close"].squeeze().dropna(); m50, m200 = sp.rolling(50).mean(), sp.rolling(200).mean()
     below = (sp < m200).tail(15)
@@ -122,6 +132,7 @@ def main():
         if test: body = ["Test email: the daily check ran.", *body]
         if new_ev and all(k.startswith("ftd_") for k in new_ev) and not new: subj = "Follow-through day"
         elif new_ev and not new: subj = "Follow-through day FAILED"
+        elif new and all(k.startswith("backstop_") for k in new): subj = "Backstop: back at your sale price"
         elif new and all(k in BEAR for k in new): subj = "Bull-market-end signal"
         elif new == [f"vix{min(cfg.get('vix', [0]))}"]: subj = "Early warning: VIX"
         else: subj = "Market alert"
