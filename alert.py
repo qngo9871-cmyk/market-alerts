@@ -142,6 +142,13 @@ def check(cfg):
             else:
                 events[f"ftdfail_{tk[1:]}_{e['date']}"] = (f"<b>{nm} follow-through day of {e['ftd_date']} FAILED</b> on {e['date']}: "
                                                           f"closed at {e['close']:,.0f}, below the rally low {e['low']:,.0f}.")
+    # cfg "skip": ["spx_le_7115", ...] drops an alert without re-entering the whole ALERT_CONFIG (level compared as a number)
+    def _same(a, b):
+        (pa, la), (pb, lb) = a.rsplit("_", 1), b.rsplit("_", 1)
+        try: return pa == pb and float(la) == float(lb)
+        except ValueError: return a == b
+    for s in cfg.get("skip", []):
+        for k in [k for k in hits if k == s or ("_" in k and _same(k, s))]: hits.pop(k); print(f"skipped {k}")
     summary = f"VIX {vix:.2f}, S&amp;P 500 {closes['spx'][0]:,.0f}, Nasdaq-100 {closes['ndx'][0]:,.0f} (closes of {closes['spx'][1]})."
     return hits, lines, events, summary
 
@@ -158,7 +165,7 @@ def send(subject, html):
 def main():
     test = "--test" in sys.argv
     cfg = json.loads(os.environ.get("ALERT_CONFIG") or "{}")
-    cfg.update(json.loads(os.environ.get("FX_CONFIG") or "{}"))           # separate secret so ALERT_CONFIG need not be re-entered
+    cfg.update(json.loads(os.environ.get("FX_CONFIG") or "{}"))           # FX_CONFIG secret: extra settings (fx_ma, skip) merged over ALERT_CONFIG, so that secret need not be re-entered
     hits, lines, events, summary = check(cfg)
     print(summary, "| hit:", [k for k, v in hits.items() if v] or "none", "| events:", list(events) or "none")
     st = json.loads(STATE.read_text()) if STATE.exists() else {}
