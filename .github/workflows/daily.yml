@@ -36,6 +36,7 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           ALERT_TO: ${{ secrets.ALERT_TO }}
           ALERT_CONFIG: ${{ secrets.ALERT_CONFIG }}
+          FX_CONFIG: ${{ secrets.FX_CONFIG }}
         run: python alert.py ${{ inputs.test && '--test' || '' }}
       - name: Save alert state
         if: success()

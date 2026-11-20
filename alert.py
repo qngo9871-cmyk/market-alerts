@@ -94,6 +94,18 @@ def check(cfg):
         k = f"backstop_{tk}"; hits[k] = bool(len(run) == n and (run >= price).all())
         lines[k] = (f"<b>Backstop: {tk} closed at {v:,.2f}</b> on {d}" + (f" ({n} closes in a row)" if n > 1 else "") +
                     f" at or above your sale price {price:,.2f}. Your rule: buy back whatever of {tk} is still unfilled.")
+    # currency vs its simple moving averages (cfg "fx_ma": {"AUDUSD=X": {"20": "plan text", "50": "plan text"}}):
+    # emails when the close goes ABOVE the n-day simple average; re-arms when it closes back below.
+    for tk, spec in cfg.get("fx_ma", {}).items():
+        nm = tk.replace("=X", "")[:3] + "/" + tk.replace("=X", "")[3:6]
+        try:
+            s = daily(tk, "1y")["Close"].squeeze().dropna(); v, d = float(s.iloc[-1]), str(s.index[-1].date())
+        except Exception as e:
+            print(f"fx {tk} skipped: {e}"); continue
+        for n, note in (spec.items() if isinstance(spec, dict) else ((str(x), "") for x in spec)):
+            m = float(s.rolling(int(n)).mean().iloc[-1]); k = f"fx_{tk}_ma{n}"; hits[k] = v > m
+            lines[k] = (f"<b>{nm} closed at {v:.4f}</b> on {d}, above its {n}-day simple average ({m:.4f})." + (f" Your plan: {note}." if note else ""))
+            print(f"{nm} {v:.4f} vs {n}-day {m:.4f}")
     # S&P 500 trend + breadth
     sp = daily("^GSPC")["Close"].squeeze().dropna(); m50, m200 = sp.rolling(50).mean(), sp.rolling(200).mean()
     below = (sp < m200).tail(15)
@@ -146,6 +158,7 @@ def send(subject, html):
 def main():
     test = "--test" in sys.argv
     cfg = json.loads(os.environ.get("ALERT_CONFIG") or "{}")
+    cfg.update(json.loads(os.environ.get("FX_CONFIG") or "{}"))           # separate secret so ALERT_CONFIG need not be re-entered
     hits, lines, events, summary = check(cfg)
     print(summary, "| hit:", [k for k, v in hits.items() if v] or "none", "| events:", list(events) or "none")
     st = json.loads(STATE.read_text()) if STATE.exists() else {}
@@ -161,6 +174,7 @@ def main():
         if new_ev and all(k.startswith("ftd_") for k in new_ev) and not new: subj = "Follow-through day"
         elif new_ev and not new: subj = "Follow-through day FAILED"
         elif new and all(k.startswith("backstop_") for k in new): subj = "Backstop: back at your sale price"
+        elif new and all(k.startswith("fx_") for k in new): subj = "Currency: back above its average"
         elif "scen_crash_tech" in new: subj = "Tech-led crash: S&P first"
         elif "scen_crash" in new: subj = "Crash scenario: buy tech at your stages"
         elif new and all(k in BEAR for k in new): subj = "Bull-market-end signal"
