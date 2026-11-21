@@ -187,7 +187,7 @@ def sec_events(cfg):
                 except Exception as e: print(f"sec {tk} {form} text skipped: {e}")
             if why:
                 ev[key] = (f"<b>{tk}: {why}</b> ({date}). <a href='{url}'>Filing</a>.<br>"
-                           f"Do: cancel the {tk} order, sell any {tk}, pause AVGO + KLAC. Nothing else changes.")
+                           f"Do: cancel the {tk} order" + ("" if why.startswith("SEC investigation") else f", sell any {tk}") + ", pause AVGO + KLAC. Nothing else changes.")
     return ev
 
 
