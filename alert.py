@@ -153,6 +153,44 @@ def check(cfg):
     return hits, lines, events, summary
 
 
+# SEC filing watch (Q 2026-11-21, NVDA accounting review reported 2026-11-20). cfg "sec_watch" overrides {"TICKER": CIK}.
+# Event = in the last 10 days: an 8-K with Item 4.01 (auditor change) or 4.02 (restatement / non-reliance), a late-filing notice
+# (NT 10-Q / NT 10-K), or a 10-Q/10-K whose text mentions an SEC investigation, subpoena or Wells notice (snippet quoted).
+SEC_WATCH = {"NVDA": 1045810}
+
+
+def sec_events(cfg):
+    import re, urllib.request, datetime as dt
+    ua = {"User-Agent": f"market-alerts personal script {os.environ.get('SMTP_USER', '')}".strip(), "Accept-Encoding": "identity"}
+    def get(url):
+        with urllib.request.urlopen(urllib.request.Request(url, headers=ua), timeout=30) as r: return r.read().decode("utf-8", "replace")
+    ev, since = {}, (dt.date.today() - dt.timedelta(days=10)).isoformat()
+    for tk, cik in (cfg.get("sec_watch") or SEC_WATCH).items():
+        try:
+            rec = json.loads(get(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json"))["filings"]["recent"]
+        except Exception as e:
+            print(f"sec {tk} skipped: {e}"); continue
+        for form, date, acc, items, doc in zip(rec["form"], rec["filingDate"], rec["accessionNumber"], rec.get("items", [""] * len(rec["form"])), rec["primaryDocument"]):
+            if date < since: break
+            url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{doc}"
+            key, why = f"sec_{tk}_{acc}", None
+            if form.startswith("8-K") and any(i in (items or "") for i in ("4.01", "4.02")):
+                why = ("Item 4.02: past financial statements should no longer be relied on (restatement)" if "4.02" in items else "Item 4.01: change of auditor")
+            elif form.startswith("NT 10"):
+                why = f"{form}: late-filing notice (the company says it cannot file its report on time)"
+            elif form in ("10-Q", "10-K"):
+                try:
+                    txt = re.sub(r"<[^>]+>|&#?\w+;", " ", get(url)); txt = re.sub(r"\s+", " ", txt)
+                    m = re.search(r"[^.]{0,250}(?:SEC|Securities and Exchange Commission)[^.]{0,250}(?:investigat|subpoena|Wells notice)[^.]{0,200}\.|"
+                                  r"[^.]{0,250}(?:investigat|subpoena|Wells notice)[^.]{0,250}(?:SEC|Securities and Exchange Commission)[^.]{0,200}\.", txt)
+                    if m: why = f"{form} mentions the SEC: \"{m.group(0).strip()[:600]}\""
+                except Exception as e: print(f"sec {tk} {form} text skipped: {e}")
+            if why:
+                ev[key] = (f"<b>{tk} SEC filing ({form}, {date})</b>: {why}. <a href='{url}'>Read the filing</a>. "
+                           f"Your rule: on a formal SEC investigation, restatement or auditor change, cancel the {tk} order and sell any {tk} held; pause AVGO and KLAC and decide again.")
+    return ev
+
+
 def send(subject, html):
     user, pw = os.environ["SMTP_USER"], os.environ["SMTP_PASS"]
     to = [x.strip() for x in (os.environ.get("ALERT_TO") or user).split(",") if x.strip()]
@@ -167,6 +205,7 @@ def main():
     cfg = json.loads(os.environ.get("ALERT_CONFIG") or "{}")
     cfg.update(json.loads(os.environ.get("FX_CONFIG") or "{}"))           # FX_CONFIG secret: extra settings (fx_ma, skip) merged over ALERT_CONFIG, so that secret need not be re-entered
     hits, lines, events, summary = check(cfg)
+    events.update(sec_events(cfg))
     print(summary, "| hit:", [k for k, v in hits.items() if v] or "none", "| events:", list(events) or "none")
     st = json.loads(STATE.read_text()) if STATE.exists() else {}
     alerted, seen = st.get("alerted", {}), set(st.get("events_sent", []))
@@ -178,7 +217,8 @@ def main():
             if lines.get(k) and lines[k] not in body: body.append(lines[k])
         body += [events[k] for k in new_ev]
         if test: body = ["Test email: the daily check ran.", *body]
-        if new_ev and all(k.startswith("ftd_") for k in new_ev) and not new: subj = "Follow-through day"
+        if any(k.startswith("sec_") for k in new_ev): subj = "SEC filing: check your NVDA exit rule"
+        elif new_ev and all(k.startswith("ftd_") for k in new_ev) and not new: subj = "Follow-through day"
         elif new_ev and not new: subj = "Follow-through day FAILED"
         elif new and all(k.startswith("backstop_") for k in new): subj = "Backstop: back at your sale price"
         elif new and all(k.startswith("fx_") for k in new): subj = "Currency: back above its average"
