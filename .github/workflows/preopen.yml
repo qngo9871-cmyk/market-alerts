@@ -1,0 +1,57 @@
+name: Pre-open brief
+on:
+  schedule:
+    # Target 19:30 Brisbane (09:30 UTC). Scheduled runs start up to ~5h late, so fire
+    # several times; the first run inside 09:00-14:25 UTC sends, the rest exit.
+    - cron: '47 4 * * 1-5'
+    - cron: '17 7 * * 1-5'
+    - cron: '37 9 * * 1-5'
+    - cron: '17 12 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Send a test email now'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: preopen-brief
+  cancel-in-progress: false
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: Restore sent marker
+        uses: actions/cache/restore@v4
+        with:
+          path: state_preopen
+          key: preopen-state-${{ github.run_id }}
+          restore-keys: preopen-state-
+      - name: Brief
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+        run: python preopen.py ${{ inputs.test && '--test' || '' }}
+      - name: Save sent marker
+        if: success() && hashFiles('state_preopen/sent.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: state_preopen
+          key: preopen-state-${{ github.run_id }}
+      - name: Email on failure
+        if: failure()
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+        run: |
+          python -c "import alert; alert.send('FAILED - pre-open brief', '<p>The pre-open brief failed. See the Actions log of qngo9871-cmyk/market-alerts.</p>')"
