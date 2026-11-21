@@ -175,19 +175,19 @@ def sec_events(cfg):
             url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{doc}"
             key, why = f"sec_{tk}_{acc}", None
             if form.startswith("8-K") and any(i in (items or "") for i in ("4.01", "4.02")):
-                why = ("Item 4.02: past financial statements should no longer be relied on (restatement)" if "4.02" in items else "Item 4.01: change of auditor")
+                why = ("restatement" if "4.02" in items else "auditor changed")
             elif form.startswith("NT 10"):
-                why = f"{form}: late-filing notice (the company says it cannot file its report on time)"
+                why = "late filing"
             elif form in ("10-Q", "10-K"):
                 try:
                     txt = re.sub(r"<[^>]+>|&#?\w+;", " ", get(url)); txt = re.sub(r"\s+", " ", txt)
                     m = re.search(r"[^.]{0,250}(?:SEC|Securities and Exchange Commission)[^.]{0,250}(?:investigat|subpoena|Wells notice)[^.]{0,200}\.|"
                                   r"[^.]{0,250}(?:investigat|subpoena|Wells notice)[^.]{0,250}(?:SEC|Securities and Exchange Commission)[^.]{0,200}\.", txt)
-                    if m: why = f"{form} mentions the SEC: \"{m.group(0).strip()[:600]}\""
+                    if m: why = f"SEC investigation mentioned: \"{m.group(0).strip()[:250]}\""
                 except Exception as e: print(f"sec {tk} {form} text skipped: {e}")
             if why:
-                ev[key] = (f"<b>{tk} SEC filing ({form}, {date})</b>: {why}. <a href='{url}'>Read the filing</a>. "
-                           f"Your rule: on a formal SEC investigation, restatement or auditor change, cancel the {tk} order and sell any {tk} held; pause AVGO and KLAC and decide again.")
+                ev[key] = (f"<b>{tk}: {why}</b> ({date}). <a href='{url}'>Filing</a>.<br>"
+                           f"Do: cancel the {tk} order, sell any {tk}, pause AVGO + KLAC. Nothing else changes.")
     return ev
 
 
@@ -217,7 +217,7 @@ def main():
             if lines.get(k) and lines[k] not in body: body.append(lines[k])
         body += [events[k] for k in new_ev]
         if test: body = ["Test email: the daily check ran.", *body]
-        if any(k.startswith("sec_") for k in new_ev): subj = "SEC filing: check your NVDA exit rule"
+        if any(k.startswith("sec_") for k in new_ev): subj = "NVDA SEC alert"
         elif new_ev and all(k.startswith("ftd_") for k in new_ev) and not new: subj = "Follow-through day"
         elif new_ev and not new: subj = "Follow-through day FAILED"
         elif new and all(k.startswith("backstop_") for k in new): subj = "Backstop: back at your sale price"
