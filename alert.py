@@ -186,8 +186,9 @@ def sec_events(cfg):
                     if m: why = f"SEC investigation mentioned: \"{m.group(0).strip()[:250]}\""
                 except Exception as e: print(f"sec {tk} {form} text skipped: {e}")
             if why:
+                # News only (Q 2026-11-23): the buy orders are already set low enough to allow for bad news; keep them.
                 ev[key] = (f"<b>{tk}: {why}</b> ({date}). <a href='{url}'>Filing</a>.<br>"
-                           f"Do: cancel the {tk} order" + ("" if why.startswith("SEC investigation") else f", sell any {tk}") + ", pause AVGO + KLAC. Nothing else changes.")
+                           f"News only: your orders stay as they are.")
     return ev
 
 
