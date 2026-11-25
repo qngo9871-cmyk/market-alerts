@@ -37,6 +37,7 @@ jobs:
           ALERT_TO: ${{ secrets.ALERT_TO }}
           ALERT_CONFIG: ${{ secrets.ALERT_CONFIG }}
           FX_CONFIG: ${{ secrets.FX_CONFIG }}
+          SERIOUS_CONFIG: ${{ secrets.SERIOUS_CONFIG }}
         run: python alert.py ${{ inputs.test && '--test' || '' }}
       - name: Save alert state
         if: success()

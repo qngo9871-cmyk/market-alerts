@@ -192,6 +192,56 @@ def sec_events(cfg):
     return ev
 
 
+# "Serious" side of Q's correction-vs-crash scorecard (Q 2026-11-25: "keep an eye out for those serious levels").
+# cfg "serious": {"spx_low": 6910.39, "vix": 40, "vix_gap": 4.95, "hyg_day": -0.01, "hyg_dd": [-0.05, -0.08],
+#                 "base": {"RSP": 207.44, "XLF": 54.57, "HYG": 76.33}, "twii_low": 36033.29}
+# Each box emails once when it first becomes true and re-arms when it is false again (same state as the other alerts).
+def serious_checks(cfg):
+    sv = cfg.get("serious")
+    if not sv: return {}, {}
+    hits, lines, px = {}, {}, {}
+    for tk in ("^GSPC", "^VIX", "^VIX3M", "HYG", "RSP", "XLF", "^TWII"):
+        try: px[tk] = daily(tk, "1y")["Close"].squeeze().dropna()
+        except Exception as e: print(f"serious {tk} skipped: {e}")
+    last = lambda tk: (float(px[tk].iloc[-1]), str(px[tk].index[-1].date()))
+    vix = last("^VIX")[0] if "^VIX" in px else None
+    if "^GSPC" in px and sv.get("spx_low"):
+        v, d = last("^GSPC"); hits["ser_spx_low"] = v < sv["spx_low"]
+        lines["ser_spx_low"] = (f"<b>S&amp;P 500 closed at {v:,.0f}</b> on {d}, below the {sv['spx_low']:,.0f} low: the rally attempt has failed and the count restarts. "
+                                "On its own that is still a correction; it gets serious if equal-weight, junk bonds and banks break too.")
+    if sv.get("vix") and vix is not None:
+        hits["ser_vix"] = vix > sv["vix"]
+        lines["ser_vix"] = f"<b>VIX closed at {vix:.2f}</b>, above {sv['vix']}: the scorecard's 'more serious' VIX level."
+    if "^VIX3M" in px and vix is not None and sv.get("vix_gap") is not None:
+        v3, d = last("^VIX3M"); gap = vix - v3; hits["ser_vix_gap"] = gap > sv["vix_gap"]
+        lines["ser_vix_gap"] = (f"<b>VIX is {gap:.1f} points above VIX3M</b> ({vix:.1f} vs {v3:.1f}, {d}): the inversion is wider than on the "
+                                f"20 Nov low ({sv['vix_gap']:.1f}). Near-term fear is rising again.")
+    if "HYG" in px:
+        h = px["HYG"]; v, d = last("HYG"); day = float(h.iloc[-1] / h.iloc[-2] - 1); dd = float(h.iloc[-1] / h.max() - 1)
+        if sv.get("hyg_day") is not None:
+            hits["ser_hyg_day"] = day <= sv["hyg_day"]
+            lines["ser_hyg_day"] = f"<b>Junk bonds (HYG) fell {day:.1%}</b> on {d} ({dd:.1%} from the 1-year high, dividends included). Credit stress is showing."
+        for lvl in sv.get("hyg_dd", []):
+            k = f"ser_hyg_dd_{abs(lvl):.2f}"; hits[k] = dd <= lvl
+            lines[k] = (f"<b>Junk bonds (HYG) are {dd:.1%} from their 1-year high</b> ({d}, dividends included), past {lvl:.0%}."
+                        + (" This is your defensive line." if lvl <= -0.08 else " The defensive line is -8%."))
+    base = sv.get("base", {})
+    if base and all(tk in px for tk in base):
+        below = {tk: last(tk)[0] < b for tk, b in base.items()}
+        hits["ser_broad"] = all(below.values())
+        lines["ser_broad"] = ("<b>Broadening:</b> " + ", ".join(f"{tk} {last(tk)[0]:,.2f} (20 Nov {b:,.2f})" for tk, b in base.items())
+                              + " are all below their 20 Nov closes. Equal-weight, banks and junk bonds falling together is the scorecard's strongest warning.")
+    if "^TWII" in px and sv.get("twii_low"):
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)                   # Taiwan closes 05:30 UTC; the late-running cron can land mid-session
+        if px["^TWII"].index[-1].date() == now.date() and now.hour < 6: px["^TWII"] = px["^TWII"].iloc[:-1]
+        v, d = last("^TWII"); hits["ser_twii_low"] = v < sv["twii_low"]
+        lines["ser_twii_low"] = (f"<b>Taiwan (TAIEX) closed at {v:,.0f}</b> on {d}, below its 20 Nov close of {sv['twii_low']:,.0f}: "
+                                 "a new low for the chip sell-off, not just a give-back.")
+    print("serious:", {k: bool(v) for k, v in hits.items()})
+    return hits, lines
+
+
 def send(subject, html):
     user, pw = os.environ["SMTP_USER"], os.environ["SMTP_PASS"]
     to = [x.strip() for x in (os.environ.get("ALERT_TO") or user).split(",") if x.strip()]
@@ -205,8 +255,10 @@ def main():
     test = "--test" in sys.argv
     cfg = json.loads(os.environ.get("ALERT_CONFIG") or "{}")
     cfg.update(json.loads(os.environ.get("FX_CONFIG") or "{}"))           # FX_CONFIG secret: extra settings (fx_ma, skip) merged over ALERT_CONFIG, so that secret need not be re-entered
+    cfg.update(json.loads(os.environ.get("SERIOUS_CONFIG") or "{}"))      # SERIOUS_CONFIG secret: {"serious": {...}} levels for serious_checks()
     hits, lines, events, summary = check(cfg)
     events.update(sec_events(cfg))
+    sh, sl = serious_checks(cfg); hits.update(sh); lines.update(sl)
     print(summary, "| hit:", [k for k, v in hits.items() if v] or "none", "| events:", list(events) or "none")
     st = json.loads(STATE.read_text()) if STATE.exists() else {}
     alerted, seen = st.get("alerted", {}), set(st.get("events_sent", []))
@@ -225,6 +277,9 @@ def main():
         elif new and all(k.startswith("fx_") for k in new): subj = "Currency: back above its average"
         elif "scen_crash_tech" in new: subj = "Tech-led crash: S&P first"
         elif "scen_crash" in new: subj = "Crash scenario: buy tech at your stages"
+        elif any(k.startswith("ser_") for k in new): subj = "Serious level hit: " + ", ".join(
+                {"ser_spx_low": "S&P below low", "ser_vix": "VIX", "ser_vix_gap": "VIX inversion", "ser_hyg_day": "junk bonds", "ser_broad": "broadening",
+                 "ser_twii_low": "Taiwan new low"}.get(k, "junk bonds") for k in new if k.startswith("ser_"))
         elif new and all(k in BEAR for k in new): subj = "Bull-market-end signal"
         elif new == [f"vix{min(cfg.get('vix', [0]))}"]: subj = "Early warning: VIX"
         else: subj = "Market alert"
